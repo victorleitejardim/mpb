@@ -1,0 +1,312 @@
+---
+title: "cwm_only"
+format: html
+---
+
+```{r}
+library(dplyr)
+library(ggplot2)
+library(vegan)
+library(stringr)
+library(ggrepel)
+library(adespatial)
+library(ecotraj)
+library(ade4)
+library(ape)
+library(tibble)
+library(iNEXT)
+library(patchwork)
+library(measurements)
+library(sf)
+```
+## trait data
+```{r}
+#| label: fig-qsfp
+#| echo: false
+#| message: false
+#| warning: false
+#| fig-height: 6.5
+#| fig-cap: Trait space quality according to the number of principal coordinate dimensions based on the absule deviance of euclidean distances.
+
+traits <- read.csv("data/traits_v2.csv", header = TRUE) %>% 
+  mutate(sp = case_match(sp,
+    "Bacillaria paradoxa" ~ "Bacillaria paxillifera",
+    "Licmophora cf. flavellata" ~ "Licmophora cf. flabellata",
+    "Campilodiscus sp." ~ "Campylodiscus sp.",
+    "Achnantes sp." ~ "Achnanthes sp.",
+    "Nitzschioides" ~ "Bacillariaceae",
+    "Licmophora cf. flavellata" ~ "Licmophora cf. flabellata",
+    "Nitzschia sp." ~ "Nitzschia sp.1",
+    "Agregats Nitzschia sp." ~ "Nitzschia sp.2",
+    "Entomoneis sp." ~ "Entomoneis sp.1",
+    "Entomoneis sp. (petite)" ~ "Entomoneis sp.2",
+    "Amphora sp." ~ "Amphora sp.1",
+    "Amphora sp. (petite)" ~ "Amphora sp.2",
+    "Synedra sp. (courbe)" ~"Synedra sp.",
+    "Melosira moniliformis (chaine)" ~ "Melosira moniliformis",
+    "Paralia sulcata (chaînes)" ~ "Paralia sulcata",
+    "Diatomee pennee 100 µm" ~ "Haslea spp.",
+    "Haslea sp." ~ "Haslea spp.",
+    "Naviculoides" ~ "Naviculaceae",
+    "Diatomees en gelee" ~ "Bacillariophyta",
+    "Rhoicosphaenia sp." ~ "Rhoicosphenia sp.",
+    "Toxarium hennedianum" ~ "Toxarium hennedyanum",
+    .default = sp)
+    )  %>% 
+  group_by(sp) %>% 
+  summarise(across(everything(), ~mean(.x, na.rm = TRUE))) %>% 
+  filter(!sp %in% c("Bacillariophyta", "Nitzschia sp.2")) %>% 
+  arrange(sp) %>% 
+  select(-ellipsoid) %>% 
+  column_to_rownames("sp")
+
+
+quantile(traits$bv)
+
+all_fuzzy <- traits %>% 
+  mutate(bv_5 = as.integer(if_else(bv < 3000, 4, 0)),
+         bv_5_10 = as.integer(if_else(bv < 15000 & bv >= 3000, 4, 0)),
+         bv_10_20 = as.integer(if_else(bv >= 15000, 4, 0))) %>%
+  select(-bv)
+```
+
+## assemblage data
+```{r}
+mpbc_raw <- read.csv("data/mpb_counts.csv", header = TRUE, row.names = 1 ) 
+
+mpbc_homo <- mpbc_raw %>% 
+  rownames_to_column("sp") %>% 
+  mutate(sp = case_match(sp,
+    "Bacillaria paradoxa" ~ "Bacillaria paxillifera",
+    "Licmophora cf. flavellata" ~ "Licmophora cf. flabellata",
+    "Campilodiscus sp." ~ "Campylodiscus sp.",
+    "Achnantes sp." ~ "Achnanthes sp.",
+    "Nitzschioides" ~ "Bacillariaceae",
+    "Licmophora cf. flavellata" ~ "Licmophora cf. flabellata",
+    "Nitzschia sp." ~ "Nitzschia sp.1",
+    "Agregats Nitzschia sp." ~ "Nitzschia sp.2",
+    "Entomoneis sp." ~ "Entomoneis sp.1",
+    "Entomoneis sp. (petite)" ~ "Entomoneis sp.2",
+    "Amphora sp." ~ "Amphora sp.1",
+    "Amphora sp. (petite)" ~ "Amphora sp.2",
+    "Synedra sp. (courbe)" ~"Synedra sp.",
+    "Melosira moniliformis (chaine)" ~ "Melosira moniliformis",
+    "Paralia sulcata (chaînes)" ~ "Paralia sulcata",
+    "Diatomee pennee 100 µm" ~ "Haslea spp.",
+    "Haslea sp." ~ "Haslea spp.",
+    "Naviculoides" ~ "Naviculaceae",
+    "Diatomees en gelee" ~ "Bacillariophyta",
+    "Rhoicosphaenia sp." ~ "Rhoicosphenia sp.",
+    "Toxarium hennedianum" ~ "Toxarium hennedyanum",
+    .default = sp)
+    )  %>% 
+  group_by(sp) %>% 
+  summarise(across(everything(), ~sum(.x, na.rm = TRUE))) %>% 
+  filter(!sp %in% c("Bacillariophyta", "Nitzschia sp.2")) %>% 
+  arrange(sp)
+  
+
+mpbc <- as.data.frame(t(mpbc_homo %>% column_to_rownames("sp")))
+mpbc[is.na(mpbc)] <-0
+
+surf <- (pi*(2.7^2))*10^-4 #m2
+vtot <- 0.1 #Litres
+vsub <- 0.003 #Litres
+mpbc_m2 <- mpbc %>% 
+  mutate(across(.cols = everything(), .fns = ~ .x * (vtot/vsub) * 1/surf))
+
+mpbc_site <- mpbc_m2 %>%
+  rownames_to_column("code") %>%
+  mutate(site = str_sub(code,1, 1),
+         site = case_when(site== "L" ~ "Pristine",
+                           site == "R" ~ "Dredged"),
+         month = as.numeric(str_sub(code,5, 6)),
+         season = as.factor(case_when(month < 04 ~ "Winter",
+                                      month >= 04 & month < 07 ~ "Spring",
+                                      month >= 07 & month < 09 ~ "Summer",
+                                      .default = "Autumn")),
+         season = factor(season,
+                         levels = c("Winter",
+                                    "Spring", 
+                                    "Summer",
+                                    "Autumn"))) |> 
+  select(site, month, season, code) |>
+  column_to_rownames("code") 
+  
+```
+
+### CWM
+```{r}
+#| include: false
+# Recode the matrix to give the same weights to all traits 
+#----------------------------------------------------------
+
+# Create the function to convert the fuzzy coded matrix (going from 0 to 4 for each modality) to a relative coding in which all modality of a given trait sum to 1 for each species
+transfo_traits <- function(x) {
+  if (is.na(sum(x))) { # If we have NA's, gives back NA's
+    rep(NA, length(x))
+  } else if (sum(x) == 0) { #  If we have only 0's, gives back only 0's
+    numeric(length(x))
+  } else { # Else, we get the modality's score and divide it by the sum of the scores of the species for all modalities of this trait
+    x / sum(x)
+  }
+}
+
+trait_list <- data.frame(modality= colnames(all_fuzzy)) %>% 
+  mutate(trait = c(
+    rep("shape", 7), #shape
+    rep("living habit", 5), #living habit
+    rep("sociability", 6), #sociability
+    rep("raphe", 3), #raphe
+    rep("attachment", 4),
+    rep("biovolume", 3)#attachment
+  ))
+  
+
+# Prepare the trait list to apply the function
+trait_list <- trait_list %>%
+  # Reorder the list according to the order of the modalities in trait_fuz
+  slice(match(colnames(all_fuzzy), trait_list$modality)) %>%
+  # Reorder the trait factor levels
+  mutate(trait = factor(trait, levels=unique(trait))) %>%
+  droplevels()
+
+# Compute the number of traits
+n_trait <- nlevels(trait_list$trait)
+
+# Define the start and end point of each trait
+n_mod <- trait_list %>%
+  # For that we compute the number of modalities for each trait
+  group_by(trait) %>%
+  summarise(n=n()) %>%
+  pull(n) %>%
+  # And we do the cumulative sum
+  cumsum(.) %>%
+  c(0,.)
+
+# Apply the function
+trait_prop <- all_fuzzy 
+fuzzy_only <- all_fuzzy 
+trait_prop[,] <- NA
+
+for(i in 1:n_trait){
+  # Select all the modalities of the trait i
+  tmp <- fuzzy_only[,seq(from=n_mod[i]+1, to=n_mod[i+1], by=1)]
+  # Apply the function to this trait
+  tmp <- t(apply(tmp, 1, transfo_traits))
+  tmp <- as.data.frame(tmp)
+  # Save
+  trait_prop[,seq(from=n_mod[i]+1, to=n_mod[i+1], by=1)] <- tmp
+}
+
+
+
+summary(trait_prop) %>%
+  kableExtra::kable("html") %>%
+  kableExtra::kable_styling(full_width = F, position="left") %>%
+  kableExtra::column_spec(column = n_mod+1, border_right = TRUE, include_thead = TRUE)
+
+
+
+# com_trait <- as.matrix(mpbc_m2) %*% as.matrix(trait_prop)
+
+
+# Compute CWM (we need to tell functcomp that trait_prop should considered as numerical) 
+CWM_tot <- FD::functcomp(x=trait_prop,
+                         a=as.matrix(mpbc_m2),
+                         bin.num=c("cylinder",
+                                   "cymbelloid",
+                                   "gomphonemoid",
+                                   "prism.on.triangular.base",
+                                   # "epipsammic",
+                                   # "epilithic",
+                                   "zigzag",
+                                   "araphid",
+                                   "biraphid",
+                                   "monoraphid",
+                                   "bv_5",
+                                   "bv_5_10",
+                                   "bv_10_20")) %>%
+  # Ensure that all variables are considered as numerical
+  mutate(across(everything(), ~as.numeric(as.character(.x))))
+
+# Compute the abundance matrix
+com_trait_estim_CWM <- rowSums(mpbc_m2,na.rm = TRUE) * CWM_tot
+rownames(com_trait_estim_CWM) <- rownames(mpbc_m2)
+
+# Check that the sum of abundances for each trait is equal to the total abundance of the sites
+
+trait_list <- data.frame(modality= colnames(all_fuzzy)) %>% 
+  mutate(trait = c(
+    rep("shape", 7), #shape
+    rep("living habit", 5), #living habit
+    rep("sociability", 6), #sociability
+    rep("raphe", 3), #raphe
+    rep("attachment", 4),
+    rep("biovolume", 3)#attachment
+  ))
+
+check_CWM <- com_trait_estim_CWM %>%
+  rownames_to_column("id") %>%
+  tidyr::gather(modality, value,-id) %>%
+  left_join(., trait_list) %>%
+  group_by(id,trait) %>%
+  summarise(value = sum(value,na.rm = TRUE)) %>%
+  left_join(., data.frame(id=rownames(mpbc_m2),tot=rowSums(mpbc_m2))) %>%
+  mutate(match_init = near(value,tot, tol = 1e-5))
+
+all(check_CWM$match_init)
+```
+
+### PCA
+```{r}
+pcacwm <- rda(decostand(com_trait_estim_CWM, method = "hellinger"))
+screeplot(pcacwm, bstick = TRUE)
+
+site_scores2 <- cbind(as.data.frame(scores(pcacwm,
+                                     scaling= 2,
+                                     display="sites",
+                                     choices=c(1,2))),
+                      mpbc_site)
+
+sp_scores <- as.data.frame(scores(pcacwm,scaling = 2,
+                                  display="species",
+                                  choices=c(1,2)))
+ggplot()+
+  geom_vline(xintercept = 0,
+               linetype = 2) + 
+    geom_hline(yintercept = 0,
+               linetype = 2) +
+  geom_point(data =site_scores2,
+             aes(x = PC1,
+                 y = PC2,
+                 colour = site))+
+  geom_segment(data = sp_scores,
+                 aes(x = 0,
+                     y = 0,
+                     xend = PC1,
+                     yend = PC2),
+                 arrow = arrow(length = unit(0.30, "cm")))+
+  ggrepel::geom_text_repel(data = sp_scores |> 
+                               mutate(labels = rownames(sp_scores),
+                                      labels = str_replace_all(labels,
+                                                           "\\.",
+                                                           " "),
+                                      labels = case_match(labels,
+                                                          "bv_5" ~ "\u003C3000 \u00B5m\u00B3",
+                                                          "bv_5_10" ~ "3000–15000 \u00B5m\u00B3",
+                                                          "bv_10_20" ~ "\u003E15000 \u00B5m\u00B3",
+                                                          .default = labels)
+                                      ),
+                             aes(x = PC1,
+                                 y = PC2,
+                                 label = labels),
+                             seed = 1,
+                             inherit.aes = FALSE)+
+  theme_light()+
+  theme(aspect.ratio = 1,
+        legend.position=c(.85,.1),
+        legend.background = element_blank())+
+      scale_colour_manual(values = c("#5F8FB8", "#C45C7A"))q
+```
+

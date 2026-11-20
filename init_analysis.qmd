@@ -1,0 +1,1236 @@
+---
+title: "MPB Maerl 2026"
+author: 
+  - Victor L. Jardim
+  
+crossref:
+  fig-prefix: Figure S
+  fig-title: Supporting Figure
+  subref-labels: alpha a
+  thm-prefix: Figure
+  thm-title: Figure
+  tbl-prefix: Table S
+  tbl-title: Supporting Table
+format:
+  html:
+    toc: true
+    toc-title: Contents
+    toc-location: left
+    toc-depth: 5
+    toc-expand: true
+    theme: minty
+    self-contained: true
+    embed-resources: true
+    code-fold: true
+    code-overflow: wrap
+    code-tools: true
+    fig-align: center
+    tbl-cap-location: top
+    fig-cap-location: bottom
+    fig-width: 6
+    fig-height: 6
+    page-layout: full
+    sidebar: true
+editor_options: 
+  chunk_output_type: console  
+execute: 
+  cache: refresh
+---
+
+```{r}
+#|include: false
+library(dplyr)
+library(ggplot2)
+library(vegan)
+library(stringr)
+library(ggrepel)
+library(adespatial)
+library(ecotraj)
+library(ade4)
+library(ape)
+library(tibble)
+library(iNEXT)
+library(patchwork)
+library(measurements)
+library(sf)
+```
+
+# Map
+
+```{r}
+coord <- data.frame(site = c("Pristine", "Dredged"),
+                    latitude = c("48 17.234", "48 19.156"),
+                    longitude = c("-4 21.179", "-4 23.051")) %>% 
+  mutate(latitude = conv_unit(.$latitude, from = "deg_dec_min", to = "dec_deg"),
+         longitude = conv_unit(.$longitude, from = "deg_dec_min", to = "dec_deg")) %>% 
+  st_as_sf(coords = c("longitude", "latitude"), crs = 4326) %>%
+  st_transform(coords, crs = 3857)
+
+#polygone bretagne
+eu_sig <- st_read("data/FRA_adm_shp/FRA_adm0.shp")
+
+brit2 <- st_crop(eu_sig, y = c(xmin = -4.6, xmax = -4.2, ymin = 48.249, ymax =48.4))
+brit2<- st_transform(brit2, crs = 3857)
+#donnee brute ofb
+ofb_data <- read_sf("data/export_maj-4/maj.shp")
+ofb_data <- st_make_valid(ofb_data)
+brit_buffer <- st_buffer(brit2, 10000)
+
+subset.int<-st_intersects(ofb_data, brit_buffer)
+subset.int.log <- lengths(subset.int) > 0
+brittany_only <- filter(ofb_data, subset.int.log)
+
+#buffer de 200m autour de chaque polygone
+buff_200 <- sf::st_buffer(brittany_only, 200)
+buff200_units <- buff_200 %>% 
+  st_union %>% 
+  st_cast('POLYGON') %>% 
+  st_sf %>% 
+  mutate(
+    unit = row_number()
+  )
+buff_units <- brittany_only %>% 
+  st_join(buff200_units, join = st_intersects)
+
+grouped_buff <- buff_units %>% 
+  group_by(unit, zone) %>% 
+  summarise() %>% 
+  #buffer de 2000m autour de chaque point d'échantillonage REBENT pour definir la taille de chaque site.
+  st_join(st_buffer(coord, 1000), join = st_intersects) %>% 
+  group_by(site) %>% 
+  summarise() %>% 
+  na.omit()
+
+# Retrieve a map layer for France
+france_data <- map_data("france")
+names(france_data) <- c("X","Y","PID","POS","region","subregion")
+
+# Zoom on Brittany
+xlim <- c(-7.5,-1.8)
+ylim <- c(46,49)
+francemap <- PBSmapping::clipPolys(france_data, xlim=xlim,ylim=ylim, keepExtra=TRUE)
+
+# Color Brittany (Bretagne)
+fill_bret <- rep("gray75",nrow(france_data))
+fill_bret[france_data$region=="Finistere"] <- "gray35"
+
+
+
+france_map <- ggplot() + coord_map()
+france_map <- france_map + scale_x_continuous(expand=c(0,0))
+france_map <- france_map + theme(axis.ticks=element_blank(), axis.title=element_blank(), axis.text=element_blank())
+france_map <- france_map + geom_polygon(data=france_data, mapping=aes(x=X, y=Y,group=PID), fill=fill_bret,col=fill_bret) 
+france_map <- france_map + theme_void() 
+
+
+
+(
+  p_map <- ggplot() +
+    geom_sf(
+      data = grouped_buff %>% st_cast("MULTIPOLYGON"),
+      aes(fill = site),
+      col = "transparent",
+      alpha = .3
+    ) +
+    geom_sf(
+      data = brit2 %>% st_cast("MULTIPOLYGON"),
+      fill = "gray90",
+      col = "transparent"
+    ) +
+    geom_rect(aes(xmin = -511500, xmax = -501500, ymin = 6162000, ymax = 6172000), fill = alpha("white", .25), col = "black")+
+    geom_sf(data = coord, aes(col = site), size = 1) +
+    annotation_custom(grob = ggplotGrob(france_map), xmin = -511000, xmax = -502000, ymin = 6160192, ymax = 6173689) +
+    coord_sf(
+      expand = FALSE,
+      label_axes = list(top = "E", left = "N")) +
+        theme(
+          panel.background = element_blank(),
+          panel.grid = element_blank(),
+          text = element_text(size = 11),
+          axis.text.x = element_text(angle = 90),
+          legend.position = c(.9, .1),
+          legend.background = element_blank()
+        ) +
+        scale_x_continuous(name = "", breaks = c(-4.6, -4.4, -4.2)) +
+        scale_y_continuous(name = "", breaks =  c(48.4, 48.3, 48.2)) +
+        # scale_fill_manual(values = pal)+
+        # scale_colour_manual(values = pal)+
+        ggspatial::annotation_scale(aes(width_hint = .2, style = "ticks")) +
+    ggspatial::annotation_north_arrow(height = unit(1, "cm"), width = unit(1, "cm"),
+                         which_north = "true", location = "bl", 
+                         pad_x = unit(0.4, "in"), pad_y = unit(0.5, "in")) +
+        scale_colour_manual(values = c("#D41159", "#1A85FF")) +
+        scale_fill_manual(values = c("#D41159", "#1A85FF"))
+    )
+
+```
+
+## Species rarefaction curves
+
+```{r}
+mpbc_raw <- read.csv("data/mpb_counts.csv", header = TRUE, row.names = 1 ) 
+
+mpbc_homo <- mpbc_raw %>% 
+  rownames_to_column("sp") %>% 
+  mutate(sp = case_match(sp,
+    "Bacillaria paradoxa" ~ "Bacillaria paxillifera",
+    "Licmophora cf. flavellata" ~ "Licmophora cf. flabellata",
+    "Campilodiscus sp." ~ "Campylodiscus sp.",
+    "Achnantes sp." ~ "Achnanthes sp.",
+    "Nitzschioides" ~ "Bacillariaceae",
+    "Licmophora cf. flavellata" ~ "Licmophora cf. flabellata",
+    "Nitzschia sp." ~ "Nitzschia sp.1",
+    "Agregats Nitzschia sp." ~ "Nitzschia sp.2",
+    "Entomoneis sp." ~ "Entomoneis sp.1",
+    "Entomoneis sp. (petite)" ~ "Entomoneis sp.2",
+    "Amphora sp." ~ "Amphora sp.1",
+    "Amphora sp. (petite)" ~ "Amphora sp.2",
+    "Synedra sp. (courbe)" ~"Synedra sp.",
+    "Melosira moniliformis (chaine)" ~ "Melosira moniliformis",
+    "Paralia sulcata (chaînes)" ~ "Paralia sulcata",
+    "Diatomee pennee 100 µm" ~ "Bacillariophyceae",
+     "Naviculoides" ~ "Naviculaceae",
+    "Diatomees en gelee" ~ "Bacillariophyta",
+    "Rhoicosphaenia sp." ~ "Rhoicosphenia sp.",
+    "Toxarium hennedianum" ~ "Toxarium hennedyanum",
+    .default = sp)
+    )  %>% 
+  filter(!sp %in% c("Bacillariophyta", "Nitzschia sp.2")) %>% 
+  arrange(sp)
+  
+
+mpbc <- as.data.frame(t(mpbc_homo %>% column_to_rownames("sp")))
+mpbc[is.na(mpbc)] <-0
+rowSums(mpbc)
+S <- data.frame(S = specnumber(mpbc), row.names = row.names(mpbc)) %>% 
+  as.data.frame() %>% 
+  rownames_to_column("code") %>% 
+  mutate(site = str_sub(code,1, 1),
+         site = as.factor(case_when(site== "L" ~ "Pristine",
+                           site == "R" ~ "Dredged")),
+         month = as.numeric(str_sub(code, 5,6)),
+         season = as.factor(case_when(month < 3 ~ "Winter",
+                            month >= 3 & month < 7 ~ "Spring",
+         month > 6 & month < 9 ~ "Summer",
+         month >= 9 ~ "Autumn")),
+         month = as.factor(month),
+         date = as.Date(str_sub(code,2, -1), "%d_%m_%y"),
+         date2 = as.factor(date))
+
+mod1 <- lm(formula = S ~ site + date2, data = S)
+jtools::summ(mod1)
+shapiro.test(S$S)
+shapiro.test(resid(mod1))
+car::ncvTest(mod1)
+anova(mod1)
+
+
+mpbc_site <- mpbc %>% 
+  tibble::rownames_to_column("code") %>% 
+  mutate(site = str_sub(code,1, 1)) %>% 
+  group_by(site) %>% 
+  summarise(across(where(is.numeric), sum)) %>%
+  ungroup() %>%  
+  column_to_rownames("site")
+
+out_site <- iNEXT(x = t(mpbc_site), datatype = "abundance")
+
+z <- fortify(out_site, type=1)%>% 
+  mutate(site = str_sub(Assemblage,1, 1),
+         site = case_when(site == "L" ~ "Pristine",
+                           site == "R" ~ "Dredged"))
+
+data.sub <- z[which(z$Method=="Observed"),]
+
+z <- z %>% 
+  mutate(Method = case_when(Method == "Observed" ~ "Rarefaction",
+                             .default = Method))
+
+ggplot(z, aes(x=x, y=y, colour=site)) + 
+    geom_point(data = data.sub, aes(shape=site), size=3.5) +
+  geom_line(aes(linetype=Method), lwd=1.25) +
+  geom_ribbon(aes_string(ymin="y.lwr", ymax="y.upr", fill="site", colour="NULL"), alpha=0.2)+
+  scale_linetype_manual(values = c(2,1))+
+  guides(linetype=guide_legend(title=NULL),
+           colour=guide_legend(title=NULL), 
+           fill=guide_legend(title=NULL)) +
+  labs(x ="Number of individuals", y = "Species richness")+
+  theme_light()+
+  theme_light()+
+  theme(legend.position = c(.8, .15),
+        panel.background = element_blank(),
+        legend.title=element_blank(),
+        text=element_text(size=11),
+        legend.key.width = unit(1.2,"cm"),
+        panel.grid = element_blank(),
+        aspect.ratio = .5
+        )+
+  scale_colour_manual(values = rev(c("#1A85FF", "#D41159")))+
+  scale_fill_manual(values = rev(c("#1A85FF", "#D41159")))+
+  guides(linetype = "legend", colour = "none", shape = "none", fill = "none")
+
+
+
+p_inext <- ggiNEXT(out_site, type = 1)+
+  labs(x ="Number of individuals", y = "Species richness")+
+  theme_light()+
+  theme(legend.position = c(.8, .15),
+        panel.background = element_blank(),
+        legend.title=element_blank(),
+        text=element_text(size=11),
+        legend.key.width = unit(1.2,"cm"),
+        panel.grid = element_blank(),
+        aspect.ratio = .5
+        )+
+  scale_colour_manual(values = c("#1A85FF", "#D41159"))+
+  scale_fill_manual(values = c("#1A85FF", "#D41159"))+
+  guides(linetype = "legend", colour = "none", shape = "none", fill = "none")
+
+(fig1 <- p_map / p_inext)
+# ggsave(filename = "fig1.svg", plot = fig1, device = svglite::svglite, width = 190, height = 210, units = "mm", dpi = 300)
+```
+
+## Global trait space
+
+```{r}
+traits <- read.csv("data/traits.csv", header = TRUE) %>% 
+  filter(!sp %in% c("Bacillariophyta", "Nitzchia sp.2")) %>% 
+  select(-ellipsoid) %>% 
+  column_to_rownames("sp")
+
+
+gdis <- gawdis::gawdis(
+  traits,
+  w.type = "equal",
+  groups = c(
+    1, #bv
+    rep(2, 7), #shape
+    rep(3, 5), #living habit
+    rep(4, 6), #sociability
+    rep(5, 3), #raphe
+    rep(6, 5) #attachment
+  ),
+  fuzzy = c(2:28)
+)
+
+qfsp <- mFD::quality.fspaces(
+  sp_dist = gdis,
+  fdendro = "average",
+  maxdim_pcoa = 10,
+  deviation_weighting = c("absolute"),
+  fdist_scaling = FALSE
+)
+
+mFD::quality.fspaces.plot(
+  fspaces_quality = qfsp,
+  fspaces_plot = rownames(qfsp$quality_fspaces)[4:7],
+  quality_metric = "mad"
+)
+
+ppcoa <- vegan::wcmdscale(sqrt(gdis), k = 5, eig = TRUE)
+
+var_axes <- round(ppcoa$eig[ppcoa$eig >0]/sum(ppcoa$eig[ppcoa$eig > 0])*100,2)
+pcoaxes <- scores(ppcoa) %>%
+  as.data.frame() %>%
+  tibble::rownames_to_column("sp")
+
+pcoarr <- as.data.frame(scores(envfit(ppcoa, traits, na.rm = TRUE), "vectors")) %>%
+  mutate(r2 = envfit(ppcoa, traits, na.rm = TRUE)[["vectors"]]$r,
+         p = envfit(ppcoa, traits, na.rm = TRUE)[["vectors"]]$pvals,
+         sig = ifelse(p < .05, "significant", "nonsignificant"))
+
+(p_ts <- ggplot() +
+    geom_vline(xintercept = 0,
+               linetype = 2) + 
+    geom_hline(yintercept = 0,
+               linetype = 2) + 
+    geom_segment(data = pcoarr ,
+                 aes(x = 0,
+                     y = 0,
+                     xend = Dim1,
+                     yend = Dim2,
+                     linewidth = sqrt(r2)),
+                 arrow = arrow(length = unit(0.30, "cm")))+
+    ggrepel::geom_text_repel(data = pcoarr,
+                             aes(x = Dim1,
+                                 y = Dim2,
+                                 label = rownames(pcoarr ),
+                                 size = sqrt(r2)),
+                             inherit.aes = FALSE)+
+    ggpubr::stat_chull(
+      data = pcoaxes,
+      mapping = aes(
+        x = Dim1,
+        y = Dim2,
+      ),
+      colour = "gray45",
+      fill = "gray45",
+      geom = "polygon",
+      alpha = .1,
+      linewidth = .6
+    )+
+    geom_point(
+      data = pcoaxes,
+      mapping = aes(
+        x = Dim1,
+        y = Dim2,
+        colour = colour
+      ),
+      colour = "gray45",
+      alpha = .8
+    ) +
+    scale_linewidth_continuous(range = c(0.25,1))+
+    scale_size_continuous(range = c(2.8,4.2))+
+    scale_x_continuous(limits = c(-.95,.95), expand = FALSE)+
+    scale_y_continuous(limits = c(-.95,.95), expand = FALSE)+
+    theme_light()+
+    labs(x = paste("Dim 1 :", var_axes[1], "%", sep = " "),
+         y = paste("Dim 2 :", var_axes[2], "%", sep = " "))+
+    theme(text = element_text(size = 11),
+          aspect.ratio = 1,
+          panel.background = element_blank(),
+          panel.grid = element_blank(),
+          legend.position = "none"
+    ))
+
+# ggsave(filename = "fig_ts.svg", plot = p_ts, device = svglite::svglite, width = 190, height = 190, units = "mm", dpi = 300)
+```
+
+### all fuzzy
+
+```{r}
+all_fuzzy <- traits %>% 
+  mutate(bv_5 = as.integer(if_else(bv < 5000, 4, 0)),
+         bv_5_10 = as.integer(if_else(bv < 10000 & bv >= 5000, 4, 0)),
+         bv_10_20 = as.integer(if_else(bv < 20000 & bv >= 10000, 4, 0)),
+         bv_20 = as.integer(if_else(bv >= 20000, 4, 0))) %>%
+  select(-bv)
+
+
+gdis <- gawdis::gawdis(
+  all_fuzzy,
+  w.type = "equal",
+  groups = c(
+    rep(1, 7), #shape
+    rep(2, 5), #living habit
+    rep(3, 6), #sociability
+    rep(4, 3), #raphe
+    rep(5, 5), #attachment
+    rep(6, 4) #biovolume
+  ),
+  fuzzy = c(1:30)
+)
+
+qfsp <- mFD::quality.fspaces(
+  sp_dist = gdis,
+  fdendro = "average",
+  maxdim_pcoa = 10,
+  deviation_weighting = c("absolute"),
+  fdist_scaling = FALSE
+)
+
+mFD::quality.fspaces.plot(
+  fspaces_quality = qfsp,
+  fspaces_plot = rownames(qfsp$quality_fspaces)[4:7],
+  quality_metric = "mad"
+)
+
+ppcoa <- vegan::wcmdscale(sqrt(gdis), k = 5, eig = TRUE)
+
+var_axes <- round(ppcoa$eig[ppcoa$eig >0]/sum(ppcoa$eig[ppcoa$eig > 0])*100,2)
+pcoaxes <- scores(ppcoa) %>%
+  as.data.frame() %>%
+  tibble::rownames_to_column("sp")
+
+pcoarr <- as.data.frame(scores(envfit(ppcoa, all_fuzzy, na.rm = TRUE), "vectors")) %>%
+  mutate(r2 = envfit(ppcoa, all_fuzzy, na.rm = TRUE)[["vectors"]]$r,
+         p = envfit(ppcoa, all_fuzzy, na.rm = TRUE)[["vectors"]]$pvals,
+         sig = ifelse(p < .05, "significant", "nonsignificant"))
+
+(p_ts <- ggplot() +
+    geom_vline(xintercept = 0,
+               linetype = 2) + 
+    geom_hline(yintercept = 0,
+               linetype = 2) + 
+    geom_segment(data = pcoarr ,
+                 aes(x = 0,
+                     y = 0,
+                     xend = Dim1,
+                     yend = Dim2,
+                     linewidth = sqrt(r2)),
+                 arrow = arrow(length = unit(0.30, "cm")))+
+    ggrepel::geom_text_repel(data = pcoarr,
+                             aes(x = Dim1,
+                                 y = Dim2,
+                                 label = rownames(pcoarr ),
+                                 size = sqrt(r2)),
+                             inherit.aes = FALSE)+
+    ggpubr::stat_chull(
+      data = pcoaxes,
+      mapping = aes(
+        x = Dim1,
+        y = Dim2,
+      ),
+      colour = "gray45",
+      fill = "gray45",
+      geom = "polygon",
+      alpha = .1,
+      linewidth = .6
+    )+
+    geom_point(
+      data = pcoaxes,
+      mapping = aes(
+        x = Dim1,
+        y = Dim2,
+        colour = colour
+      ),
+      colour = "gray45",
+      alpha = .8
+    ) +
+    geom_text_repel(
+      data = pcoaxes,
+      mapping = aes(
+        x = Dim1,
+        y = Dim2,
+        label = sp
+      ),
+      size = 2
+    ) +
+    scale_linewidth_continuous(range = c(0.25,1))+
+    scale_size_continuous(range = c(2.8,4.2))+
+    scale_x_continuous(limits = c(-.95,.95), expand = FALSE)+
+    scale_y_continuous(limits = c(-.95,.95), expand = FALSE)+
+    theme_light()+
+    labs(x = paste("Dim 1 :", var_axes[1], "%", sep = " "),
+         y = paste("Dim 2 :", var_axes[2], "%", sep = " "))+
+    theme(text = element_text(size = 11),
+          aspect.ratio = 1,
+          panel.background = element_blank(),
+          panel.grid = element_blank(),
+          legend.position = "none"
+    ))
+```
+
+```{r}
+#| tbl-cap: Traits and trait categories used to built the regional trait space. Abreviations shown in the top panel of figure 1 (main text) are also shown.
+#| echo: false
+#| label: tbl-traits
+
+trait_list <- data.frame(modality= colnames(all_fuzzy)) %>% 
+  mutate(trait = c(
+    rep("shape", 7), #shape
+    rep("living habit", 5), #living habit
+    rep("sociability", 6), #sociability
+    rep("raphe", 3), #raphe
+    rep("attachment", 5),
+    rep("biovolume", 5)#attachment
+  )) %>% 
+  select(trait, modality)
+traitlist <- read.csv2("data/trait.list.csv") %>% 
+  rename_with(.fn = str_to_sentence,
+              .cols = everything()) %>% 
+  dplyr::rename(Categories = Modalites) %>% 
+  mutate(across(.cols = Traits:Categories,
+                .fns = str_to_sentence),
+         Abreviations = tolower(Abreviations)) %>% 
+  filter(!Abreviations %in% c("bioturb_r"),
+         !Traits %in% c("Sexual diff",
+                        "Reproduction freq",
+                        "Reproduction",
+                        "Life span")
+         ) %>% 
+  mutate(Traits = ifelse(duplicated(Traits), " ", Traits))
+
+knitr::kable(traitlist)
+```
+
+## Site trait space
+
+```{r}
+#| fig-height: 6.5
+#| warning: false
+#| message: false
+#| echo: false
+
+library(reshape)
+
+surf <- (pi*(2.7^2))*10^-4 #m2
+vtot <- 0.1 #Litres
+vsub <- 0.003 #Litres
+mpbc_m2 <- mpbc %>% 
+  mutate(across(.cols = everything(), .fns = ~ .x * (vtot/vsub) * 1/surf))
+
+mpbc_site <- mpbc_m2 %>%
+  rownames_to_column("code") %>%
+  mutate(site = str_sub(code,1, 1),
+         site = case_when(site== "L" ~ "Lomergat",
+                           site == "R" ~ "Rozegat")) %>%
+  tidyr::pivot_longer(cols = `Achnanthes sp.`:`Tryblionella sp.`,
+                      names_to = "sp",
+                      values_to ="n") %>% 
+  filter(!sp %in% c("Bacillariophyta", "Nitzschia sp.2"))
+
+poly <- cast(mpbc_site, formula = site~sp, value = 'n', fun.aggregate = sum)
+rownames(poly) <- NULL
+poly <- poly %>%
+  column_to_rownames("site") %>%
+  # decostand(., method = "hellinger") %>% 
+  rownames_to_column("site")
+poly <- melt(poly, variable_name = "sp") %>%
+  mutate(site = as.factor(site)) %>%
+  group_by(site,sp) %>%
+  summarise(n = sum(value)) %>%
+  ungroup() 
+df <- data.frame()
+for (i in levels(poly$site)) {
+    df_i <- poly %>%
+      filter(site == i) %>%
+      filter(n > 0) %>%
+      select(sp, site, n) %>% 
+      left_join(pcoaxes)
+  df <- rbind(df, df_i)
+  df
+}
+
+df <- df %>%
+  mutate(AZ1 = n*Dim1,
+         AZ2 = n*Dim2) %>% 
+  group_by(site) %>%
+  mutate(C1 = sum(AZ1)/sum(n),
+         C2 = sum(AZ2)/sum(n)) %>% 
+  ungroup()
+  
+
+
+(p1 <- ggplot() +
+  geom_vline(xintercept = 0,
+             linetype = 2) + 
+  geom_hline(yintercept = 0,
+             linetype = 2) + 
+  ggpubr::stat_chull(
+    data = df,
+    mapping = aes(
+      x = Dim1,
+      y = Dim2,
+      fill = site,
+      colour = site,
+    ),
+    geom = "polygon",
+    alpha = .1,
+    linetype = 2,
+    linewidth = .4
+  ) +
+   # geom_segment(
+   #  data = df,
+   #  aes(
+   #    x = C1,
+   #    y = C2,
+   #    xend = Dim1,
+   #    yend = Dim2,
+   #    colour = site
+   #    ),
+   #  linetype = 2,
+   #  linewidth = .2,
+   #  alpha = .5) +
+  geom_point(
+    data = df %>% arrange(desc(n)),
+    mapping = aes(
+      x = Dim1,
+      y = Dim2,
+      colour = site,
+      # shape = year,
+      size = n
+    ),
+    alpha = 1
+  ) +
+  #   geom_point(
+  #   data = df,
+  #   mapping = aes(
+  #     x = C1,
+  #     y = C2,
+  #     # shape = year
+  #   ),
+  #   alpha = .5,
+  #   size = 2,
+  #   colour = "black"
+  # ) +
+  # scale_color_manual(values = pal)+
+  # scale_fill_manual(values = pal)+
+  theme_light() +
+  lims(x = c(-.5,.5), y = c(-.5,.5))+
+  theme(aspect.ratio = 1,
+        panel.grid = element_blank())+
+    scale_colour_manual(values = c("#1A85FF","#D41159"))+
+    scale_fill_manual(values = c("#1A85FF", "#D41159")))
+
+```
+
+## Monthly trait space
+
+```{r}
+test <- mpbc_m2 %>%
+  # decostand(., method = "hellinger") %>% 
+  tibble::rownames_to_column("code") %>% 
+  mutate(site = str_sub(code,1, 1)) %>% 
+  mutate(date = as.Date(str_sub(code,2, -1), "%d_%m_%y")) %>%
+  tidyr::pivot_longer(cols = `Achnanthes sp.`:`Tryblionella sp.`,
+                      names_to = "sp",
+                      values_to ="n") %>% 
+  filter(!sp %in% c("Bacillariophyta", "Nitzschia sp.2")) %>% 
+  left_join(pcoaxes) %>% 
+      filter(n > 0)
+(p2 <- ggplot() +
+  geom_vline(xintercept = 0,
+             linetype = 2) + 
+  geom_hline(yintercept = 0,
+             linetype = 2) + 
+  ggpubr::stat_chull(
+    data = test %>% arrange(desc(n)),
+    mapping = aes(
+      x = Dim1,
+      y = Dim2,
+      fill = site,
+      colour = site,
+    ),
+    geom = "polygon",
+    alpha = .1,
+    linetype = 2,
+    linewidth = .4
+  ) +
+  geom_point(
+    data = test %>% arrange(desc(n)),
+    mapping = aes(
+      x = Dim1,
+      y = Dim2,
+      colour = site,
+      # shape = year,
+      size = n
+    ),
+    alpha = 1
+  ) +
+  facet_wrap(facets = "date")+
+  theme_light() +
+    labs(x = paste("Dim 1 :", var_axes[1], "%", sep = " "),
+         y = paste("Dim 2 :", var_axes[2], "%", sep = " "))+
+  lims(x = c(-.5,.5), y = c(-.5,.5))+
+  theme(aspect.ratio = 1,
+        panel.grid = element_blank(),
+        panel.background = element_blank(),
+        legend.position = "none")+
+    scale_colour_manual(values = c("#1A85FF","#D41159"))+
+    scale_fill_manual(values = c("#1A85FF", "#D41159")))
+
+# ggsave(filename = "subplots.svg", plot = p2, device = svglite::svglite, width = 190, height = 190, units = "mm", dpi = 300)
+
+
+```
+
+```{r}
+mpbc_site <- mpbc_m2 %>%
+  rownames_to_column("code") %>%
+  mutate(site = str_sub(code,1, 1),
+         site = case_when(site== "L" ~ "Lomergat",
+                           site == "R" ~ "Rozegat"),
+         month = as.numeric(str_sub(code,5, 6)),
+         season = as.factor(case_when(month < 04 ~ "Winter",
+                                      month >= 04 & month < 07 ~ "Spring",
+                                      month >= 07 & month < 09 ~ "Summer",
+                                      .default = "Autumn")),
+         season = factor(season,
+                         levels = c("Winter",
+                                    "Spring", 
+                                    "Summer",
+                                    "Autumn"))) %>%
+  tidyr::pivot_longer(cols = `Achnanthes sp.`:`Tryblionella sp.`,
+                      names_to = "sp",
+                      values_to ="n") %>% 
+  filter(!sp %in% c("Bacillariophyta", "Nitzschia sp.2"))
+
+poly <- mpbc_site %>%
+  mutate(site = as.factor(site)) %>%
+  group_by(site,season, sp) %>%
+  summarise(n = sum(n)) %>%
+  ungroup() 
+df <- data.frame()
+for (i in levels(poly$site)) {
+    df_i <- poly %>%
+      filter(site == i) %>%
+      filter(n > 0) %>%
+      select(sp, site, season, n) %>% 
+      left_join(pcoaxes)
+  df <- rbind(df, df_i)
+  df
+}
+
+df <- df %>%
+  mutate(AZ1 = n*Dim1,
+         AZ2 = n*Dim2) %>% 
+  group_by(site) %>%
+  mutate(C1 = sum(AZ1)/sum(n),
+         C2 = sum(AZ2)/sum(n)) %>% 
+  ungroup()
+  
+  
+
+(p3 <- ggplot() +
+  geom_vline(xintercept = 0,
+             linetype = 2) + 
+  geom_hline(yintercept = 0,
+             linetype = 2) + 
+  ggpubr::stat_chull(
+    data = df,
+    mapping = aes(
+      x = Dim1,
+      y = Dim2,
+      fill = site,
+      colour = site,
+    ),
+    geom = "polygon",
+    alpha = .1,
+    linetype = 2,
+    linewidth = .4
+  ) +
+   # geom_segment(
+   #  data = df,
+   #  aes(
+   #    x = C1,
+   #    y = C2,
+   #    xend = Dim1,
+   #    yend = Dim2,
+   #    colour = site
+   #    ),
+   #  linetype = 2,
+   #  linewidth = .2,
+   #  alpha = .5) +
+  geom_point(
+    data = df %>% arrange(desc(n)),
+    mapping = aes(
+      x = Dim1,
+      y = Dim2,
+      colour = site,
+      # shape = year,
+      size = n
+    ),
+    alpha = 1
+  ) +
+  #   geom_point(
+  #   data = df,
+  #   mapping = aes(
+  #     x = C1,
+  #     y = C2,
+  #     # shape = year
+  #   ),
+  #   alpha = .5,
+  #   size = 2,
+  #   colour = "black"
+  # ) +
+  # scale_color_manual(values = pal)+
+  # scale_fill_manual(values = pal)+
+  facet_wrap(facets ="season")+
+  theme_light() +
+  lims(x = c(-.5,.5), y = c(-.5,.5))+
+  theme(aspect.ratio = 1,
+        panel.grid = element_blank())+
+    scale_colour_manual(values = c("#1A85FF","#D41159"))+
+    scale_fill_manual(values = c("#1A85FF", "#D41159")))
+```
+
+## Functional diversity
+
+```{r}
+fdsite <- mFD::alpha.fd.multidim(sp_faxes_coord = scores(ppcoa),
+                                 asb_sp_w = as.matrix(decostand(mpbc_m2,
+                                                                method = "hellinger")
+                                 ), verbose = FALSE)
+
+pfdsite <- fdsite$functional_diversity_indices %>% 
+  as.data.frame() %>% 
+  tibble::rownames_to_column("code") %>% 
+  mutate(site = str_sub(code,1, 1),
+         site = as.factor(case_when(site== "L" ~ "Pristine",
+                           site == "R" ~ "Dredged")),
+         month = as.numeric(str_sub(code, 5,6)),
+         season = as.factor(case_when(month < 3 ~ "Winter",
+                            month >= 3 & month < 7 ~ "Spring",
+         month > 6 & month < 9 ~ "Summer",
+         month >= 9 ~ "Autumn")),
+         month = as.factor(month),
+         date = as.Date(str_sub(code,2, -1), "%d_%m_%y"),
+         date2 = as.factor(date))
+
+shapiro.test(pfdsite$fric[pfdsite$site=="Pristine"])
+shapiro.test(pfdsite$fric[pfdsite$site=="Dredged"])
+mod_fric <- lm(formula = fric ~ site + date2, data = pfdsite)
+library(ggfortify)
+autoplot(mod_fric)
+jtools::summ(mod_fric)
+shapiro.test(resid(mod_fric))
+car::ncvTest(mod_fric)
+anova(mod_fric)
+```
+
+## Assemblage x trait matrix
+
+```{r}
+# Recode the matrix to give the same weights to all traits 
+#----------------------------------------------------------
+
+# Create the function to convert the fuzzy coded matrix (going from 0 to 4 for each modality) to a relative coding in which all modality of a given trait sum to 1 for each species
+transfo_traits <- function(x) {
+  if (is.na(sum(x))) { # If we have NA's, gives back NA's
+    rep(NA, length(x))
+  } else if (sum(x) == 0) { #  If we have only 0's, gives back only 0's
+    numeric(length(x))
+  } else { # Else, we get the modality's score and divide it by the sum of the scores of the species for all modalities of this trait
+    x / sum(x)
+  }
+}
+all_fuzzy <- traits %>% 
+  mutate(bv_5 = as.integer(if_else(bv < 5000, 4, 0)),
+         bv_5_10 = as.integer(if_else(bv < 10000 & bv >= 5000, 4, 0)),
+         bv_10_20 = as.integer(if_else(bv < 20000 & bv >= 10000, 4, 0)),
+         bv_20_40 = as.integer(if_else(bv < 40000 & bv >= 20000, 4, 0)),
+         bv_40 = as.integer(if_else(bv >= 40000, 4, 0))) %>%
+  select(-bv)
+trait_list <- data.frame(modality= colnames(all_fuzzy)) %>% 
+  mutate(trait = c(
+    rep("shape", 7), #shape
+    rep("living habit", 5), #living habit
+    rep("sociability", 6), #sociability
+    rep("raphe", 3), #raphe
+    rep("attachment", 5),
+    rep("biovolume", 5)#attachment
+  ))
+  
+
+# Prepare the trait list to apply the function
+trait_list <- trait_list %>%
+  # Reorder the list according to the order of the modalities in trait_fuz
+  slice(match(colnames(all_fuzzy), trait_list$modality)) %>%
+  # Reorder the trait factor levels
+  mutate(trait = factor(trait, levels=unique(trait))) %>%
+  droplevels()
+
+# Compute the number of traits
+n_trait <- nlevels(trait_list$trait)
+
+# Define the start and end point of each trait
+n_mod <- trait_list %>%
+  # For that we compute the number of modalities for each trait
+  group_by(trait) %>%
+  summarise(n=n()) %>%
+  pull(n) %>%
+  # And we do the cumulative sum
+  cumsum(.) %>%
+  c(0,.)
+
+# Apply the function
+trait_prop <- all_fuzzy 
+fuzzy_only <- all_fuzzy 
+trait_prop[,] <- NA
+
+for(i in 1:n_trait){
+  # Select all the modalities of the trait i
+  tmp <- fuzzy_only[,seq(from=n_mod[i]+1, to=n_mod[i+1], by=1)]
+  # Apply the function to this trait
+  tmp <- t(apply(tmp, 1, transfo_traits))
+  tmp <- as.data.frame(tmp)
+  # Save
+  trait_prop[,seq(from=n_mod[i]+1, to=n_mod[i+1], by=1)] <- tmp
+}
+
+
+
+
+
+summary(trait_prop) %>%
+  kableExtra::kable("html") %>%
+  kableExtra::kable_styling(full_width = F, position="left") %>%
+  kableExtra::column_spec(column = n_mod+1, border_right = TRUE, include_thead = TRUE)
+
+
+
+# com_trait <- as.matrix(mpbc_m2) %*% as.matrix(trait_prop)
+
+
+# mpbc_m2 <- mpbc_m2 %>% 
+#   select(-Bacillariophyta, -`Nitzschia sp.2`)
+
+# Compute CWM (we need to tell functcomp that trait_prop should considered as numerical) 
+CWM_tot <- FD::functcomp(x=trait_prop,
+                         a=as.matrix(mpbc_m2),
+                         bin.num=c("cylinder",
+                                   "cymbelloid",
+                                   "gomphonemoid",
+                                   "prism.on.triangular.base",
+                                   "zigzag",
+                                   "araphid",
+                                   "biraphid",
+                                   "monoraphid",
+                                   "tubes",
+                                   "bv_5",
+                                   "bv_5_10",
+                                   "bv_10_20",
+                                   "bv_20_40",
+                                   "bv_40")) %>%
+  # Ensure that all variables are considered as numerical
+  mutate(across(everything(), ~as.numeric(as.character(.x))))
+
+# Compute the abundance matrix
+com_trait_estim_CWM <- rowSums(mpbc_m2,na.rm = TRUE) * CWM_tot
+rownames(com_trait_estim_CWM) <- rownames(mpbc_m2)
+
+# Check that the sum of abundances for each trait is equal to the total abundance of the sites
+
+trait_list <- data.frame(modality= colnames(all_fuzzy)) %>% 
+  mutate(trait = c(
+    rep("shape", 7), #shape
+    rep("living habit", 5), #living habit
+    rep("sociability", 6), #sociability
+    rep("raphe", 3), #raphe
+    rep("attachment", 5),
+    rep("biovolume", 5)#attachment
+  ))
+
+check_CWM <- com_trait_estim_CWM %>%
+  rownames_to_column("id") %>%
+  tidyr::gather(modality, value,-id) %>%
+  left_join(., trait_list) %>%
+  group_by(id,trait) %>%
+  summarise(value = sum(value,na.rm = TRUE)) %>%
+  left_join(., data.frame(id=rownames(mpbc_m2),tot=rowSums(mpbc_m2))) %>%
+  mutate(match_init = near(value,tot, tol = 1e-6))
+
+all(check_CWM$match_init)
+```
+
+## CWM traj
+
+```{r}
+CWM_pcoa <- pcoa(dist.ldc(CWM_tot, "hellinger"), correction="none", rn=NULL)
+# Calculate weighted average scores using the species data and PCoA result
+weighted_scores <- wascores(CWM_pcoa$vectors, CWM_tot)
+
+# Extract the scores for PCoA1 and PCoA2 dimensions
+weighted_scores_pcoa <- data.frame(Dim1 =  weighted_scores[,1],
+                                   Dim2 =  weighted_scores[,2])
+
+# Select the top contributing species (e.g., top 10)
+(top_species <- rownames(weighted_scores_pcoa)[order(weighted_scores_pcoa$Dim1, decreasing = TRUE)][1:9])
+
+meta <- as.data.frame(CWM_tot) %>% 
+  tibble::rownames_to_column("code") %>% 
+  mutate(site = str_sub(code,1, 1),
+         site = as.factor(ifelse(site == "R","Dredged", "Pristine")),
+         month = as.numeric(str_sub(code, 5,6)),
+         season = case_when(month < 3 ~ "Winter",
+                            month >= 3 & month < 7 ~ "Spring",
+         month > 6 & month < 9 ~ "Summer",
+         month >= 9 ~ "Autumn"),
+         date = as.Date(str_sub(code,2, -1), "%d_%m_%y")) %>% 
+  select(site, month, season,code, date)
+
+traj <- defineTrajectories(dist.ldc(CWM_tot, "hellinger"), sites =meta$site, times = meta$month)
+trajobj <- trajectoryPCoA(traj,  traj.colors = c("red", "blue"), lwd = 2, 
+                      survey.labels = F)
+legend("bottomleft", col = c("red", "blue"), legend=levels(meta$site), bty="n", lty=1, lwd = 2)
+
+
+trajdf <- trajobj$points %>% as.data.frame()%>%
+  bind_cols(meta)
+
+```
+
+### ggplot
+
+```{r}
+var_axes <- round(CWM_pcoa$values$Eigenvalues[CWM_pcoa$values$Eigenvalues >0]/sum(CWM_pcoa$values$Eigenvalues[CWM_pcoa$values$Eigenvalues > 0])*100,2)
+# pal <- paletteer::paletteer_c("grDevices::ag_Sunset", 9, direction = -1)
+# color_palette <- RColorBrewer::brewer.pal(9, "YlGn")
+# trajdf$date <- as.numeric(trajdf$date)
+# time_breaks <- seq(min(trajdf$date), max(trajdf$date), length.out = length(color_palette) + 1)
+# time_colors <- pal[findInterval(trajdf$date, time_breaks, all.inside = TRUE)]
+
+t1 <- ggplot(trajdf)+
+  geom_point(aes(x = V1,
+                 y = V2,
+                 colour =  site,
+                 group = site),
+             size = 1.5) +
+  geom_path(aes(x = V1,
+                y = V2,
+                colour = site,
+                group = site),
+            linewidth = 1,
+            arrow = arrow(length = unit(0.3, "cm"),
+                          type = "open"))+
+  # scale_color_identity()+
+  coord_cartesian(xlim = c(-.47, .47), ylim = c(-.47, .47))+
+  # facet_wrap(facets = ~site)+
+  theme_light()+
+  theme(aspect.ratio = 1,
+        legend.position=c(.85,.85),
+        legend.background = element_blank())+
+      scale_colour_manual(values = c("#D41159", "#1A85FF"))+
+    scale_fill_manual(values = c("#D41159", "#1A85FF"))+
+  labs(x = paste("Dim 1:", var_axes[1], "%", sep = " "),
+         y = paste("Dim 2:", var_axes[2], "%", sep = " "))
+
+is.synchronous(traj)
+
+```
+
+## Taxonomic traj
+
+```{r}
+#| output: false
+mpbc_pcoa <- pcoa(dist.ldc(mpbc, "hellinger"), correction="none", rn=NULL)
+# Calculate weighted average scores using the species data and PCoA result
+weighted_scores <- wascores(mpbc_pcoa$vectors, mpbc)
+
+# Extract the scores for PCoA1 and PCoA2 dimensions
+weighted_scores_pcoa <- data.frame(Dim1 =  weighted_scores[,1],
+                                   Dim2 =  weighted_scores[,2])
+
+
+# Select the top contributing species (e.g., top 10)
+(top_species <- rownames(weighted_scores_pcoa)[order(weighted_scores_pcoa$Dim1, decreasing = TRUE)][1:9])
+
+meta <- as.data.frame(mpbc) %>% 
+  tibble::rownames_to_column("code") %>% 
+  mutate(site = str_sub(code,1, 1),
+         site = as.factor(ifelse(site == "R","Dredged", "Pristine")),
+         month = as.numeric(str_sub(code, 5,6)),
+         season = case_when(month < 3 ~ "Winter",
+                            month >= 3 & month < 7 ~ "Spring",
+         month > 6 & month < 9 ~ "Summer",
+         month >= 9 ~ "Autumn"),
+         code = paste(site,season)) %>% 
+  select(site, month, season,code)
+
+traj <- defineTrajectories(dist.ldc(mpbc, "hellinger"), sites =meta$site, times = meta$month)
+trajobj <- trajectoryPCoA(traj,  traj.colors = c("red", "blue"), lwd = 2, 
+                      survey.labels = F)
+legend("bottomleft", col = c("red", "blue"), legend=levels(meta$site), bty="n", lty=1, lwd = 2)
+
+
+trajdf <- trajobj$points %>% as.data.frame()%>%
+  bind_cols(meta)
+```
+
+### ggplot
+
+```{r}
+var_axes <- round(mpbc_pcoa$values$Eigenvalues[mpbc_pcoa$values$Eigenvalues >0]/sum(mpbc_pcoa$values$Eigenvalues[mpbc_pcoa$values$Eigenvalues > 0])*100,2)
+t2 <- ggplot(trajdf)+
+  geom_point(aes(x = V1,
+                 y = V2,
+                 colour =  site),
+             size = 1.5) +
+  geom_path(aes(x = V1,
+                y = V2,
+                colour = site),
+            linewidth = 1,
+            arrow = arrow(length = unit(0.3, "cm"),
+                          type = "closed"))+
+  coord_cartesian(xlim = c(-.85, .85), ylim = c(-.85, .85))+
+  theme_light()+
+  theme(aspect.ratio = 1,
+        legend.position= "none"
+        )+
+      scale_colour_manual(values = c("#D41159", "#1A85FF"))+
+    scale_fill_manual(values = c("#D41159", "#1A85FF"))+
+  labs(x = paste("Dim 1:", var_axes[1], "%", sep = " "),
+         y = paste("Dim 2:", var_axes[2], "%", sep = " "))
+
+is.synchronous(traj)
+
+```
+
+# Carbon estimation
+
+```{r}
+bv <- traits %>% 
+  rownames_to_column("sp") %>% 
+  mutate(c_pg = 10^(.76*log10(bv)-.352)) %>% 
+  arrange(sp) %>% 
+  select(sp, bv, c_pg)
+mpbc_homo[is.na(mpbc_homo)] <- 0
+
+surf <- (pi*(2.7^2))*10^-4 #m2
+vtot <- 0.1 #Litres
+vsub <- 0.003 #Litres
+mpbb_m2 <- mpbc_homo %>% 
+  mutate(across(.cols = -sp, .fns = ~ .x * (vtot/vsub) * 1/surf))
+
+mpbb <- mpbb_m2 %>% 
+  left_join(bv) %>% 
+  mutate(across(.cols = R18_02_2021:L27_10_2021, .fns = ~ .x * c_pg * 1e-6)) %>% 
+  select(-c_pg, -bv) %>% 
+  column_to_rownames("sp") %>% 
+  na.omit() %>% 
+  t() %>% 
+  as.data.frame()
+
+btot <- data.frame(code = rownames(mpbb), biomass =rowSums(mpbb), dens = rowSums(mpbc_m2)) %>% 
+  mutate(site = str_sub(code,1, 1),
+         site = as.factor(case_when(site== "L" ~ "Pristine",
+                           site == "R" ~ "Dredged")),
+         month = as.numeric(str_sub(code, 5,6)),
+         season = as.factor(case_when(month < 3 ~ "Winter",
+                            month >= 3 & month < 7 ~ "Spring",
+         month > 6 & month < 9 ~ "Summer",
+         month >= 9 ~ "Autumn")),
+         month = as.factor(month),
+         date = as.Date(str_sub(code,2, -1), "%d_%m_%y"),
+         date2 = as.factor(date)) %>%
+  left_join(pfdsite)
+
+(pb <- ggplot(btot)+
+  geom_line(aes(x = date,
+                y = biomass*1e-3,
+                colour = site,
+                group = site),
+            linewidth = 1)+
+  scale_y_log10()+
+  scale_x_date(date_labels = "%b",
+               breaks = btot$date)+
+  theme_light()+
+  theme(text = element_text(size = 11),
+          # aspect.ratio = .5,
+          panel.background = element_blank(),
+          panel.grid = element_blank(),
+          legend.position = "none"
+    )+
+      scale_colour_manual(values = c("#D41159", "#1A85FF"))+
+    scale_fill_manual(values = c("#D41159", "#1A85FF"))+
+  labs(y = expression(paste("Biomass (mg C ", m^-2, ")")),
+         x = "Date")+
+  coord_cartesian(expand = c(left =FALSE,
+                             right = FALSE)))
+
+shapiro.test(btot$biomass[pfdsite$site=="Pristine"])
+shapiro.test(btot$biomass[pfdsite$site=="Dredged"])
+mod_biom <- lm(formula = log(biomass) ~ date2, data = btot)
+library(ggfortify)
+autoplot(mod_fric)
+jtools::summ(mod_fric)
+shapiro.test(resid(mod_fric))
+car::ncvTest(mod_fric)
+anova(mod_fric)
+
+```
+
+# Final figure traj
+
+```{r}
+design <- c(
+  area(1,1,2,2),
+  area(1,3,2,4),
+  area(3,1,4,4)
+)
+(t2|t1) / free(pb)
+
+
+
+```

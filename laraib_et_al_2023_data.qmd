@@ -1,0 +1,77 @@
+---
+title: "Laraib et al. (2023) dataset"
+format: html
+---
+
+```{r}
+library(dplyr)
+library(ggplot2)
+library(vegan)
+library(stringr)
+library(ggrepel)
+library(adespatial)
+library(ecotraj)
+library(ade4)
+library(ape)
+library(tibble)
+library(iNEXT)
+library(patchwork)
+library(measurements)
+library(sf)
+```
+
+```{r}
+traits_uk <- read.csv2("data/Phytoplankton__Progetto_Strategico_2009_2012_United_Kingdom.csv")|> 
+  select(country, class:genus, scientificName, shape, biovolume)|> 
+  mutate(biovolume = as.numeric(biovolume))
+
+traits_med <- read.csv2("data/PhytoplanktonTraits_Mediterranean_BlackSea_CoastalLagoons_v1.2.csv") |> 
+  select(country, class, family, order, genus, scientificName, shape, biovolume) |> 
+  mutate(shape = tolower(shape)) |> 
+  mutate(biovolume = as.numeric(biovolume))
+
+traits_bs <- read.csv("data/Phytoplankton__Progetto_Strategico_2009_2012_Turkey.csv",dec = ".",sep = ";") |> 
+  select(country, class:genus, scientificName, shape, biovolume)
+
+traits_au <- read.csv("data/Phytoplankton__Progetto_Strategico_2009_2012_Australia.csv",dec = ".",sep = ";") |> 
+  select(country, class:genus, scientificName, shape, biovolume)
+
+traits_br <- read.csv2("data/Phytoplankton__Progetto_Strategico_2009_2012_Brasil.csv") |> 
+  select(country, class:genus, scientificName, shape, biovolume) |> 
+  mutate(biovolume = as.numeric(biovolume))
+
+traits_mv <- read.csv2("data/Phytoplankton_Progetto_Strategico_2009_2012_Maldives.csv")|> 
+  select(country, class:genus, scientificName, shape, biovolume)|> 
+  mutate(biovolume = as.numeric(biovolume))
+
+tt <- traits_uk |>
+  bind_rows(traits_med) |>
+  bind_rows(traits_br) |> 
+  bind_rows(traits_bs) |>
+  bind_rows(traits_au) |> 
+  bind_rows(traits_mv) |> 
+  filter(class == "Bacillariophyceae")
+
+```
+
+```{r}
+
+
+qt <- data.frame()
+for (ctry in unique(tt$country)) {
+  data <- tt |> filter(country == ctry)
+  
+  qt <- qt |>  
+    bind_rows(as.data.frame(t(quantile(data$biovolume, na.rm = TRUE))) |> 
+                mutate(country = ctry) |>
+                select(country, everything())) 
+  qt
+}
+
+  quantile(tt$biovolume, na.rm = TRUE)
+
+ggplot(tt, aes(x = biovolume)) +
+    geom_histogram(na.rm = TRUE, bins = 3)+
+    # scale_x_log10()+
+  facet_wrap(facets = ~country)
+```
