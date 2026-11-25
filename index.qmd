@@ -50,6 +50,19 @@ library(terra)
 library(tidyterra)
 ```
 
+# Abstract
+
+Microphytobenthos, the photosynthetic microalgae living on the seafloor, contribute substantially to primary production in coastal ecosystems. Diatoms are among the most diverse and often dominant group of these communities in most systems. In maerl beds, microphytobenthos is thought to represent an important food source for benthic organisms. Yet, despite its presumed ecological importance, the composition, diversity and dynamics of maerl-associated microphytobenthic communities remain unknown. These habitats are increasingly threatened by bottom-dredging fisheries, which can reduce benthic abundance and alter community structure and lead to functional shifts. This study characterises the taxonomic and functional composition of diatom communities associated with maerl beds and assesses their response to dredging by comparing a unimpacted and a dredged bed. Six functional traits (biovolume, cell shape, living habit, raphe, sociability and attachment mode) were characterized for each taxon. Across both beds, 44 taxa spanning 29 genera, 23 families and 15 orders were identified. Communities were dominated by Bacillariales, Naviculales, Thalassiophysales and Licmophorales, with strong seasonal shifts in the abundance of individual taxa. Dredging was associated with a marked reduction in diatom abundance, with approximately 20-fold lower cell abundance and 14-fold lower estimated carbon biomass (45.3 vs 3.2 mg C m-2) in the dredged bed. Taxonomic richness was also reduced, from 42 taxa in the unimpacted bed to 29 in the dredged bed. Dredging further altered seasonal dynamics, with the pronounced spring abundance pulse observed in the unimpacted bed absent from the dredged bed and shifted functional composition through the loss of sessile and colonial taxa. Our findings reveal a diverse and functionally structured diatom community in maerl beds and suggest that dredging disrupts both its functional composition and seasonal dynamics, potentially altering an important pathway of benthic primary production.  
+
+::: {#fig-maerlbeds layout-ncol=2}
+
+![Unimpacted](unimpacted.png){#fig-unimpacted}
+
+![Dredged](dredged.png){#fig-dredged}
+
+Maerl beds in Brittany. Photos by Erwan Amice (CNRS)
+:::
+
 # Data
 
 ## Diatom counts
@@ -329,6 +342,7 @@ ofb_data2 <- read_sf("data/export_maj-4/IFR_RBT_MAERL_BZH_P.shp") |>
 #l'API limite chaque requete a 366 jours -> deux requetes (end_date exclue)
 periods <- list(c("2020-10-01", "2021-10-01"),
                 c("2021-10-01", "2021-10-28"))
+
 
 gfw_raw <- periods |> 
   lapply(\(p) gfw_ais_fishing_hours(spatial_resolution = "HIGH",
@@ -1616,6 +1630,3 @@ ggsave(filename = "fig_temporal.svg", plot = p4, device = svglite::svglite, widt
 p_cwm1
 p_cwm2
 ```
-
-
-

@@ -2,3 +2,5 @@
 *.ply
 *.vectorcraft
 .Rproj.user
+
+**/*.quarto_ipynb
